@@ -83,7 +83,7 @@ def imzoom2fit_rect(img, tgt_rect, is_padding=False, inter=cv.INTER_CUBIC):
 
 
 if '__main__' == __name__:
-    BASE_DIR, FILE_NAME = os.path.split(__file__)
+    BASE_DIR, FILE_NAME = os.path.split(os.path.abspath(__file__))
     path = '/var/asuspei/large_data/pic/mat4zoom/burger_king.jpg'
     IMG_PATH = os.path.join(BASE_DIR, path)
     landscape = cv.imread(IMG_PATH, cv.IMREAD_COLOR)

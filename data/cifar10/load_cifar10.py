@@ -23,10 +23,7 @@ def _load(xurl, xname, only_meta=False):
     sep('Load Cifar10 dataset')
 
     # decide data dir
-    BASE_DIR, FILE_NAME = os.path.split(__file__)
-    if not os.path.isabs(BASE_DIR):
-        xpwd = os.getcwd()
-        BASE_DIR = os.path.join(xpwd, BASE_DIR)
+    BASE_DIR, FILE_NAME = os.path.split(os.path.abspath(__file__))
     data_dir = os.path.join(BASE_DIR, '_data')
     os.makedirs(data_dir, exist_ok=True)
 
