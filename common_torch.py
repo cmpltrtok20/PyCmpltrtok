@@ -8,6 +8,7 @@ import numpy as np
 import torch
 from torch.utils.data import TensorDataset, DataLoader
 from PyCmpltrtok.common import sep, get_path_from_prefix
+import torch.distributed as dist
 
 
 class CommonTorchException(Exception):
@@ -18,7 +19,8 @@ def torch_compile(
     ts=None, device=None, model=None, criterion=None,
     optim=None, ALPHA=None, GAMMA=None, GAMMA_STEP=1,
     metrics=None,
-    ext='.pth'
+    ext='.pth',
+    rank=-1,
 ):
     """
     Simulate TensorFlow2's  keras.Model.compile
@@ -60,6 +62,7 @@ def torch_compile(
     else:
         model_dict['lr_scheduler'] = torch.optim.lr_scheduler.StepLR(model_dict['optim'], step_size=GAMMA_STEP, gamma=GAMMA, verbose=True)
     model_dict['ext'] = ext
+    model_dict['rank'] = rank
     return model_dict
 
 
@@ -98,7 +101,7 @@ def torch_acc_top2(y, pred):
     return torch_acc_topn(y, pred, 2)
 
 
-def torch_process_data(model_dict, dl, is_train, label, epoch=0):
+def torch_process_data(model_dict, dl, is_train, label, epoch=0, world_size=1):
     """
     The work horse of training / validating / testing
 
@@ -110,6 +113,7 @@ def torch_process_data(model_dict, dl, is_train, label, epoch=0):
     :return: tuple (avg_loss, avg_metric)
     """
     sep(label, cnt=16)
+    rank = model_dict['rank']
     ts = model_dict['tvts']
     device = model_dict['device']
     model = model_dict['model']
@@ -156,7 +160,8 @@ def torch_process_data(model_dict, dl, is_train, label, epoch=0):
             }
             for k, v in metrics.items():
                 xparams[k] = v
-            ts.save_batch(epoch, batch, xparams)
+            if rank in set([0, -1]):
+                ts.save_batch(epoch, batch, xparams)
 
         avg_loss += lossv
         for k in metrics_dict.keys():
@@ -168,7 +173,7 @@ def torch_process_data(model_dict, dl, is_train, label, epoch=0):
     return avg_loss, avg_metrics
 
 
-def torch_fit(model_dict, dl_train, dl_val, n_epochs):
+def torch_fit(model_dict, dl_train, dl_val, n_epochs, world_size=1):
     """
     Simulate TensorFlow2's  keras.Model.fit
 
@@ -178,6 +183,7 @@ def torch_fit(model_dict, dl_train, dl_val, n_epochs):
     :param n_epochs: How many epochs to train.
     :return: None
     """
+    rank = model_dict['rank']
     ts = model_dict['tvts']
     model = model_dict['model']
     optim = model_dict['optim']
@@ -199,33 +205,37 @@ def torch_fit(model_dict, dl_train, dl_val, n_epochs):
         save_model(f'{ts.name}-{ts.train_id}-{epoch}-interrupted')
         sys.exit(0)
 
-    signal.signal(signal.SIGINT, signal_handler)
+    if rank in set([0, -1]):
+        signal.signal(signal.SIGINT, signal_handler)
 
+    if rank in set([0, -1]):
+        ts.mark_start_dt()
     for epoch in range(n_epochs):
         epoch += 1
         sep(epoch)
-        avg_loss, avg_metrics = torch_process_data(model_dict, dl_train, True, 'train', epoch)
-        avg_loss_val, avg_metrics_val = torch_process_data(model_dict, dl_val, False, 'val', epoch)
+        avg_loss, avg_metrics = torch_process_data(model_dict, dl_train, True, 'train', epoch, world_size)
+        avg_loss_val, avg_metrics_val = torch_process_data(model_dict, dl_val, False, 'val', epoch, world_size)
         print(f'epoch#{epoch + 1}: loss = {avg_loss} acc = {avg_metrics}, loss_val = {avg_loss_val}, acc_val = {avg_metrics_val}')
 
-        if epoch % ts.save_freq == 0 or epoch == n_epochs:
-            save_name = ts.get_save_name(epoch)
-            save_path = save_model(save_name)
-            save_rel_path = os.path.relpath(save_path, ts.save_dir)
-        else:
-            save_rel_path = None
+        if rank in set([0, -1]):
+            if epoch % ts.save_freq == 0 or epoch == n_epochs:
+                save_name = ts.get_save_name(epoch)
+                save_path = save_model(save_name)
+                save_rel_path = os.path.relpath(save_path, ts.save_dir)
+            else:
+                save_rel_path = None
 
-        lr = optim.param_groups[0]['lr']
-        xparams = {
-            'loss': avg_loss,
-            'loss_val': avg_loss_val,
-            'lr': lr,
-        }
-        for k, v in avg_metrics.items():
-            xparams[k] = v
-        for k, v in avg_metrics_val.items():
-            xparams[k+'_val'] = v
-        ts.save_epoch(epoch, xparams, save_rel_path, ts.save_dir)
+            lr = optim.param_groups[0]['lr']
+            xparams = {
+                'loss': avg_loss,
+                'loss_val': avg_loss_val,
+                'lr': lr,
+            }
+            for k, v in avg_metrics.items():
+                xparams[k] = v
+            for k, v in avg_metrics_val.items():
+                xparams[k+'_val'] = v
+            ts.save_epoch(epoch, xparams, save_rel_path, ts.save_dir)
 
         if model_dict['lr_scheduler'] is not None:
             model_dict['lr_scheduler'].step()
@@ -262,3 +272,41 @@ def torch_infer(x, model, device, batch_size):
         else:
             pred = np.concatenate([pred, bpred], axis=0)
     return pred
+
+
+def patchify_fast(images, nh, nw=None):
+    if nw is None:
+        nw = nh
+    n, c, h, w = images.shape
+
+    assert h % nh == 0, "Input shape not entirely divisible by number of patches"
+    assert w % nw == 0, "Input shape not entirely divisible by number of patches"
+    hsize = h // nh
+    wsize = w // nw
+
+    patches = images
+    # print(patches.shape)  # n, c, h, w
+    if isinstance(patches, np.ndarray):
+        is_np = True
+    else:
+        is_np = False
+
+    trans_tuple = (0, 2, 3, 1)  # n, h, w, c
+    if is_np:
+        patches = np.transpose(patches, trans_tuple)
+    else:
+        patches = torch.permute(patches, trans_tuple)
+    # print(patches.shape)
+    patches = patches.reshape(n, nh, hsize, nw, wsize, c)  # as code
+    # print(patches.shape)
+
+    trans_tuple = (0, 1, 3, 5, 2, 4)  # n, nh, nw, c, hsize, wsize
+    if is_np:
+        patches = np.transpose(patches, trans_tuple)
+    else:
+        patches = torch.permute(patches, trans_tuple)
+    # print(patches.shape)
+    patches = patches.reshape(n, nh * nw, c * hsize * wsize)
+    # print(patches.shape)
+
+    return patches
