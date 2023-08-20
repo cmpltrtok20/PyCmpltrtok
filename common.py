@@ -141,6 +141,10 @@ def get_now_string():
     return f'{datetime.datetime.now()}; {time.time_ns()}'
 
 
+def get_now_string_short():
+    return str(datetime.datetime.now())
+
+
 def check_np(arr, name):
     print(f'{name}: dtype: {arr.dtype}, shape: {arr.shape}, nbytes: {arr.nbytes}')
 
