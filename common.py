@@ -18,6 +18,10 @@ def sep(label='', cnt=32, char='-', rchar=None):
     print(char * cnt, label, rchar * cnt, sep='')
 
 
+def sep_str(label):
+    return '----------------%s----------------' % (str(label), )
+
+
 def int_round(x):
     return int(round(x))
 
@@ -70,7 +74,7 @@ def get_prefix_from_path(path, ext, force=True):
     matcher = regexp.match(path)
     if matcher is None:
         if force:
-            raise Exception(f'Path "{path}" is not right!')
+            raise Exception('Path "%s" is not right!' % path)
         else:
             return path
     prefix = matcher.group(1)
@@ -83,7 +87,7 @@ def get_path_from_prefix(xprefix, ext):
         return None
     if ext == '':
         return xprefix
-    return f'{xprefix}{ext}'
+    return str(xprefix) + str(ext)
 
 
 def get_tmp_file_name(path, new_ext=None, tgt_dir=None):
@@ -138,7 +142,7 @@ def rand_name_on_now():
 
 
 def get_now_string():
-    return f'{datetime.datetime.now()}; {time.time_ns()}'
+    return '%s; %ld' % (datetime.datetime.now(), time.time_ns())
 
 
 def get_now_string_short():
@@ -146,11 +150,11 @@ def get_now_string_short():
 
 
 def check_np(arr, name):
-    print(f'{name}: dtype: {arr.dtype}, shape: {arr.shape}, nbytes: {arr.nbytes}')
+    print('%s: dtype: %s, shape: %s, nbytes: %d' % (name, arr.dtype, str(arr.shape), arr.nbytes))
 
 
 def check_np_detailed(arr, name):
-    print(f'min: {arr.min():.2e},\tmax: {arr.max():.2e},\tmean: {arr.mean():.2e},\tstd: {arr.std():.2e},\tdtype: {arr.dtype},\tshape: {arr.shape},\tnbytes: {arr.nbytes},\t{name}')
+    print('min: %.2e,\tmax: %.2e,\tmean: %.2e,\tstd: %.2e,\tdtype: %s,\tshape: %s,\tnbytes: %d,\t%s' % (arr.min(), arr.max(), arr.mean(), arr.std(), arr.dtype, str(arr.shape), arr.nbytes, name))
 
 
 def rand_color(low=0, high=256):
@@ -184,7 +188,7 @@ class MyTimer(object):
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.time2 = datetime.datetime.now()
         self.duration = self.time2 - self.time1
-        print(f'Duration: {self.duration}')
+        print('Duration: %s' % str(self.duration))
 
 
 def parse_ids_list(list_str):
@@ -227,7 +231,7 @@ def translate_ns(ns):
     ms_ = mili % 1000
     dt = datetime.datetime.fromtimestamp(s)
     xstr = dt.strftime('%Y-%m-%d %H:%M:%S')
-    return f'{xstr}.{ms_:03d}'
+    return '%s.%03d' % (xstr, ms_)
 
 
 def translate_s(s):
@@ -253,7 +257,7 @@ def md5(xstr):
 
 
 def prefix(value, prefix):
-    return f'{prefix}{value}'
+    return str(prefix) + str(value)
 
 
 def is_prefix(value, prefix):
@@ -262,7 +266,7 @@ def is_prefix(value, prefix):
 
 
 def suffix(value, suffix):
-    return f'{value}{suffix}'
+    return str(value) + str(suffix)
 
 
 def is_suffix(value, suffix):
@@ -301,6 +305,11 @@ def tidy_arr_from_f_readlines(arr):
 def clone(src):
     dest = json.loads(json.dumps(src))
     return dest
+
+
+def check_env(names):
+    for name in names:
+        print('|%s|=|%s|' % (name, os.environ.get(name, '<None>')))
 
 
 if '__main__' == __name__:

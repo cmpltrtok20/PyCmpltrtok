@@ -9,6 +9,7 @@ import torch
 from torch.utils.data import TensorDataset, DataLoader
 from PyCmpltrtok.common import sep, get_path_from_prefix
 import torch.distributed as dist
+from torch.optim import Optimizer
 
 
 class CommonTorchException(Exception):
@@ -54,6 +55,8 @@ def torch_compile(
         model_dict['metric'] = metrics
     if optim is None:
         model_dict['optim'] = None
+    elif isinstance(optim, Optimizer):
+        model_dict['optim'] = optim
     else:
         model_dict['optim'] = optim(params=model.parameters(), lr=ALPHA)
 
@@ -82,11 +85,11 @@ def torch_acc_top1(y, pred):
 
 def torch_acc_topn(y, pred, n):
     """
-    Top-1 accuracy.
+    Top-n accuracy.
 
     :param y: The groud truth vector.
     :param pred: The prediction tensor in shape (batch, n_cls)
-    :return: the top-1 accuracy value.
+    :return: the top-n accuracy value.
     """
     n_cls = pred.shape[1]
     assert n <= n_cls
