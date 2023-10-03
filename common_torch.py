@@ -127,9 +127,15 @@ def torch_process_data(model_dict, dl, is_train, label, epoch=0, world_size=1):
     avg_metrics = {}
     for k in metrics_dict.keys():
         avg_metrics[k] = 0.
-    for i, (bx, by) in enumerate(dl):
+    for i, batch_data in enumerate(dl):
         batch = i + 1
         print('>', end='', flush=True)
+        
+        if isinstance(batch_data, dict):
+            bx = batch_data['feature']
+            by = batch_data['label']
+        else:
+            bx, by = batch_data
         bx = bx.float().to(device)
         by = by.long().to(device)
         if is_train:
@@ -142,7 +148,8 @@ def torch_process_data(model_dict, dl, is_train, label, epoch=0, world_size=1):
             model.train(False)
         else:
             model.train(False)
-            h = model(bx)
+            with torch.no_grad():
+                h = model(bx)
             if criterion is not None:
                 loss = criterion(h, by)
             else:
