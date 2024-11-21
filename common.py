@@ -3,19 +3,24 @@ Common routines
 """
 import re
 import os
+import sys
 import datetime
 import numpy as np
 import math
 import time
 import hashlib
 import json
+import random
+import copy
+import glob
+from typing import Tuple
 
 
 def sep(label='', cnt=32, char='-', rchar=None):
     """Util function to print a separator line with label."""
     if rchar is None:
         rchar = char
-    print(char * cnt, label, rchar * cnt, sep='')
+    print(char * cnt, label, rchar * cnt, sep='', flush=True)
 
 
 def sep_str(label):
@@ -303,7 +308,7 @@ def tidy_arr_from_f_readlines(arr):
 
 
 def clone(src):
-    dest = json.loads(json.dumps(src))
+    dest = copy.deepcopy(src)
     return dest
 
 
@@ -312,12 +317,133 @@ def check_env(names):
         print('|%s|=|%s|' % (name, os.environ.get(name, '<None>')))
 
 
+def uuid():
+    xns = time.time_ns()
+    xns = '%020d' % xns
+    xrand = random.randint(0, 999999)
+    xrand = '%06d' % xrand
+    xuuid = xns + '_' + xrand
+    return xuuid
+
+
+def ensure_decode_of_str(xbytes):
+    xres = xbytes.decode('utf8', 'replace')
+    return xres
+
+
+def to_decode(x, enc='utf8', default=''):
+    if x is None:
+        return default
+    else:
+        return x.decode(enc)
+    
+    
+def to_int(x, default=0):
+    if x is None:
+        return default
+    else:
+        return int(x)
+
+
+def encode_set(xset):
+    """
+    编码集合
+    """
+    if not xset:
+        return ''
+    return '|'.join(sorted(xset))
+
+
+def decode_set(xstr):
+    """
+    解码编码后的集合。（注意返回是列表。）
+    """
+    if not xstr:
+        return []
+    return xstr.split('|')
+
+
+def list2str_with_limit(xlist, xlimit):
+    """
+    以xlimit个字符为限制，把列表转字符串。
+    """
+    assert(isinstance(xlimit, int) and xlimit > 0)
+    xstr = ''
+    xfirst = True
+    for xelement in xlist:
+        if len(xstr) + 2 + len(xelement) > xlimit:
+            return xstr + '……'
+        if xfirst:
+            xfirst = False
+        else:
+            xstr += ', '
+        xstr += str(xelement)
+    return xstr
+
+
+def dl2ld(dl):
+    """
+    https://stackoverflow.com/questions/5558418/list-of-dicts-to-from-dict-of-lists
+
+    :param dl:
+    :return:
+    """
+    # return [dict(zip(dl, t)) for t in zip(*dl.values())]
+    return [dict(zip(dl.keys(), t)) for t in zip(*dl.values())]
+
+
+def ld2dl(ld):
+    """
+    https://stackoverflow.com/questions/5558418/list-of-dicts-to-from-dict-of-lists
+
+    :param ld:
+    :return:
+    """
+    return {k: [dic[k] for dic in ld] for k in ld[0]}
+
+
+def glob_dir(xdir):
+    paths = glob.glob(f'{xdir}/**', recursive=True)
+    paths = sorted(paths)
+    return paths
+
+    
+def has_content(path: str) -> Tuple[bool, bool]:
+    """
+    Check if a path exists and has content.
+    
+    :param path: The path
+    :return: (bool, bool)
+        bool 01: if the path is a directory.
+        bool 02: if the path exists if path is not a directory
+                 or if the directory has content
+    """
+    if not os.path.isdir(path):
+        result = os.path.exists(path)
+        return False, result
+    
+    paths = glob_dir(path)
+    for p in paths:
+        if not os.path.isdir(p):
+            return True, True
+    return True, False
+
 if '__main__' == __name__:
 
     def _main():
         print(os.environ['PYTHONPATH'])
 
         """Unit tests for some routines declared in this file."""
+        
+        ##############################################################
+        # glob_dir
+        paths = glob_dir('/home/yunpeng/models/hf/m3e-base')
+        print('\n'.join(paths))
+        
+        sys.exit(0)
+        
+        ##############################################################
+        # get_prefix_from_path and get_path_from_prefix
         # ext = '.pth'
         ext = '/saved_model.pb'
         xpaths = [
@@ -334,3 +460,4 @@ if '__main__' == __name__:
             print(xprefix, '=>', xpath)
 
     _main()
+    

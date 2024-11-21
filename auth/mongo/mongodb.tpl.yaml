@@ -1,0 +1,11 @@
+!!python/object/apply:collections.OrderedDict
+-   -   - host
+        - localhost
+    -   - port
+        - 27017
+    -   - username
+        - root
+    -   - passwd
+        - passwd
+    -   - None
+        - null

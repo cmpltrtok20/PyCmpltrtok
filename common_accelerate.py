@@ -8,27 +8,24 @@ import numpy as np
 import torch
 from torch.utils.data import TensorDataset, DataLoader
 from PyCmpltrtok.common import sep, get_path_from_prefix
+from PyCmpltrtok.common_torch import CommonTorchException
 import torch.distributed as dist
 from torch.optim import Optimizer
+import accelerate as acc
 
 
-class CommonTorchException(Exception):
-    pass
-
-
-def torch_compile(
-    ts=None, device=None, model=None, criterion=None,
+def acc_compile(
+    ts=None, model=None, criterion=None,
     optim=None, ALPHA=None, GAMMA=None, GAMMA_STEP=1, GAMMA_STRATEGY: str='epoch', GAMMA_VERBOSE=True,
     warmup=0,
     metrics=None,
     ext='.pth',
-    rank=-1,
+    acc_kwargs={},
 ):
     """
     Simulate TensorFlow2's  keras.Model.compile
 
     :param ts: TVTS object.
-    :param device: The device to use, GPU or CPU.
     :param model: The modle.
     :param criterion: The loss.
     :param optim: The optimizer.
@@ -39,10 +36,12 @@ def torch_compile(
     :param ext: The extension file name of saved weights.
     :return: dict
     """
+    accelerator = acc.Accelerator(**acc_kwargs)
     model_dict = {}
+    model_dict['acc'] = accelerator
     model_dict['tvts'] = ts
-    model_dict['device'] = device
-    model_dict['model'] = model
+    model_dict['device'] = accelerator.device
+    
     model_dict['criterion'] = criterion
     if metrics is None:
         model_dict['metric'] = {}
@@ -60,29 +59,45 @@ def torch_compile(
     model_dict['lr'] = ALPHA
         
     if optim is None:
-        model_dict['optim'] = None
+        raise Exception('optim cannot be None!')
     elif isinstance(optim, Optimizer):
-        model_dict['optim'] = optim
+        optim = optim
     else:
-        model_dict['optim'] = optim(params=model.parameters(), lr=ALPHA)
+        optim = optim(params=model.parameters(), lr=ALPHA)
 
     assert isinstance(warmup, int)
     assert warmup >= 0
     model_dict['warmup'] = warmup
 
     if GAMMA is None:
-        model_dict['lr_scheduler'] = None
+        lr = None
     else:
         assert GAMMA_STRATEGY in set(['step', 'epoch']), 'GAMMA_STRATEGY must be "step" or "epoch".'
         model_dict['gamma_strategy'] = GAMMA_STRATEGY
         model_dict['gamma_step'] = GAMMA_STEP
-        model_dict['lr_scheduler'] = torch.optim.lr_scheduler.StepLR(model_dict['optim'], step_size=1, gamma=GAMMA, verbose=GAMMA_VERBOSE)
+        lr = torch.optim.lr_scheduler.StepLR(optim, step_size=1, gamma=GAMMA, verbose=GAMMA_VERBOSE)
         if model_dict['warmup'] > 0:
-            for group in model_dict['lr_scheduler'].optimizer.param_groups:
+            for group in lr.optimizer.param_groups:
                 group['lr'] = 0.0
             print(f"**** Warning: warmup for {model_dict['warmup']} {model_dict['gamma_strategy']}(s)")
         else:
             print('**** No warmup.')
+            
+    model = accelerator.prepare(model)
+    if optim is not None:
+        optim = accelerator.prepare(optim)
+    if lr is not None:
+        lr = accelerator.prepare(lr)
+            
+    model_dict['model'] = model
+    model_dict['o_model'] = accelerator.unwrap_model(model)
+    model_dict['optim'] = optim
+    model_dict['lr_scheduler'] = lr
+                
+    rank = accelerator.process_index
+    world_size = accelerator.num_processes
+    if world_size <= 1:
+        rank = -1
                 
     model_dict['ext'] = ext
     model_dict['rank'] = rank
@@ -90,42 +105,7 @@ def torch_compile(
     return model_dict
 
 
-def torch_acc_top1(y, pred):
-    """
-    Top-1 accuracy.
-
-    :param y: The groud truth vector.
-    :param pred: The prediction tensor in shape (batch, n_cls)
-    :return: the top-1 accuracy value.
-    """
-    y = y.long()
-    pred = pred.argmax(dim=1)
-    acc = torch.eq(y, pred).float().mean()
-    return acc
-
-
-def torch_acc_topn(y, pred, n):
-    """
-    Top-n accuracy.
-
-    :param y: The groud truth vector.
-    :param pred: The prediction tensor in shape (batch, n_cls)
-    :return: the top-n accuracy value.
-    """
-    n_cls = pred.shape[1]
-    assert n <= n_cls
-    y = y.long().reshape(-1, 1)
-    pred = pred.argsort(dim=1)[:, n_cls-n:n_cls]
-    ys = torch.tile(y, (n,))
-    acc = torch.any(torch.eq(ys, pred), dim=1).float().mean()
-    return acc
-
-
-def torch_acc_top2(y, pred):
-    return torch_acc_topn(y, pred, 2)
-
-
-def torch_process_data(model_dict, dl, is_train, label, epoch=0, world_size=1):
+def acc_process_data(model_dict, dl, is_train, label, epoch=0, world_size=1):
     """
     The work horse of training / validating / testing
 
@@ -144,6 +124,9 @@ def torch_process_data(model_dict, dl, is_train, label, epoch=0, world_size=1):
     optim = model_dict['optim']
     criterion = model_dict['criterion']
     metrics_dict = model_dict['metric']
+    accelerator = model_dict['acc']
+    dl = accelerator.prepare(dl)
+    
     avg_loss = 0.
     avg_metrics = {}
     for k in metrics_dict.keys():
@@ -157,8 +140,8 @@ def torch_process_data(model_dict, dl, is_train, label, epoch=0, world_size=1):
             by = batch_data['label']
         else:
             bx, by = batch_data
-        bx = bx.float().to(device)
-        by = by.long().to(device)
+        bx = bx.float()
+        by = by.long()
         if isinstance(criterion, torch.nn.CrossEntropyLoss):
             by = by.view(-1)
         if is_train:
@@ -168,7 +151,7 @@ def torch_process_data(model_dict, dl, is_train, label, epoch=0, world_size=1):
             h = model(bx)
 
             loss = criterion(h, by)
-            loss.backward()
+            accelerator.backward(loss)
             optim.step()
             model.train(False)
         else:
@@ -208,7 +191,7 @@ def torch_process_data(model_dict, dl, is_train, label, epoch=0, world_size=1):
             
         if is_train and model_dict['gamma_strategy'] == 'step' and model_dict['lr_scheduler'] is not None:
             if model_dict['warmup'] > 0 and model_dict['global_step'] <= model_dict['warmup']:
-                for group in model_dict['lr_scheduler'].optimizer.param_groups:
+                for group in model_dict['lr_scheduler'].scheduler.optimizer.param_groups:
                     group['lr'] = (model_dict['global_step'] / model_dict['warmup'] * model_dict['lr'])
             elif (model_dict['global_step'] - model_dict['warmup']) % model_dict['gamma_step'] == 0:
                 model_dict['lr_scheduler'].step()
@@ -219,7 +202,7 @@ def torch_process_data(model_dict, dl, is_train, label, epoch=0, world_size=1):
     return avg_loss, avg_metrics
 
 
-def torch_fit(model_dict, dl_train, dl_val, n_epochs, world_size=1):
+def acc_fit(model_dict, dl_train, dl_val, n_epochs, world_size=1):
     """
     Simulate TensorFlow2's  keras.Model.fit
 
@@ -259,9 +242,9 @@ def torch_fit(model_dict, dl_train, dl_val, n_epochs, world_size=1):
     for idx in range(n_epochs):
         epoch = idx + 1
         sep(epoch)
-        avg_loss, avg_metrics = torch_process_data(model_dict, dl_train, True, 'train', epoch, world_size)
+        avg_loss, avg_metrics = acc_process_data(model_dict, dl_train, True, 'train', epoch, world_size)
         if rank in set([0, -1]):
-            avg_loss_val, avg_metrics_val = torch_process_data(model_dict, dl_val, False, 'val', epoch, world_size)
+            avg_loss_val, avg_metrics_val = acc_process_data(model_dict, dl_val, False, 'val', epoch, world_size)
         if rank in set([0, -1]):
             print(f'epoch#{epoch + 1}: loss = {avg_loss} metrics = {avg_metrics}, loss_val = {avg_loss_val}, metrics_val = {avg_metrics_val}')
         else:
@@ -294,81 +277,6 @@ def torch_fit(model_dict, dl_train, dl_val, n_epochs, world_size=1):
                 model_dict['lr_scheduler'].step()
 
 
-def torch_evaluate(model_dict, dl_test):
-    avg_loss_test, avg_metrics_test = torch_process_data(model_dict, dl_test, False, 'test')
+def acc_evaluate(model_dict, dl_test):
+    avg_loss_test, avg_metrics_test = acc_process_data(model_dict, dl_test, False, 'test')
     return avg_loss_test, avg_metrics_test
-
-
-def torch_infer(x, model, device, batch_size):
-    """
-    Infer
-
-    :param x: Input tensor as (N, C, H, W)
-    :param model: The model.
-    :param device: The device, GPU or CPU.
-    :param batch_size: Batch size used when inferring.
-    :return:
-    """
-    x = torch.Tensor(x)
-    ds_x = TensorDataset(x)
-    dl_x = DataLoader(ds_x, batch_size, drop_last=False)
-
-    net = model
-    net.eval()
-    pred = None
-    
-    with torch.no_grad():
-        for bx, in dl_x:
-            bx = bx.to(device)
-            bpred = net(bx)
-            bpred = bpred.detach().cpu().numpy()
-            if pred is None:
-                pred = bpred
-            else:
-                pred = np.concatenate([pred, bpred], axis=0)
-    return pred
-
-
-def patchify_fast(images, nh, nw=None):
-    if nw is None:
-        nw = nh
-    n, c, h, w = images.shape
-
-    assert h % nh == 0, "Input shape not entirely divisible by number of patches"
-    assert w % nw == 0, "Input shape not entirely divisible by number of patches"
-    hsize = h // nh
-    wsize = w // nw
-
-    patches = images
-    # print(patches.shape)  # n, c, h, w
-    if isinstance(patches, np.ndarray):
-        is_np = True
-    else:
-        is_np = False
-
-    trans_tuple = (0, 2, 3, 1)  # n, h, w, c
-    if is_np:
-        patches = np.transpose(patches, trans_tuple)
-    else:
-        patches = torch.permute(patches, trans_tuple)
-    # print(patches.shape)
-    patches = patches.reshape(n, nh, hsize, nw, wsize, c)  # as code
-    # print(patches.shape)
-
-    trans_tuple = (0, 1, 3, 5, 2, 4)  # n, nh, nw, c, hsize, wsize
-    if is_np:
-        patches = np.transpose(patches, trans_tuple)
-    else:
-        patches = torch.permute(patches, trans_tuple)
-    # print(patches.shape)
-    patches = patches.reshape(n, nh * nw, c * hsize * wsize)
-    # print(patches.shape)
-
-    return patches
-
-
-def check_dtype(model):
-    xset = set()
-    for param in model.parameters():
-        xset.add(f'{param.dtype}')
-    return sorted(xset)

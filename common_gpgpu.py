@@ -1,4 +1,9 @@
 import os
+from pynvml import (
+    nvmlInit,
+    nvmlDeviceGetHandleByIndex,
+    nvmlDeviceGetMemoryInfo,
+)
 from PyCmpltrtok.common import sep, parse_ids_list
 
 
@@ -11,6 +16,13 @@ def get_gpu_indexes_from_env(env_name='CUDA_VISIBLE_DEVICES'):
         return indexes
 
 
+def print_gpu_utilization(idx):
+    nvmlInit()
+    handle = nvmlDeviceGetHandleByIndex(idx)
+    info = nvmlDeviceGetMemoryInfo(handle)
+    print(f"#{idx} GPU memory occupied: {info.used//1024**2} MB.")
+    
+    
 if '__main__' == __name__:
     sep('default')
     ids = get_gpu_indexes_from_env()
@@ -21,3 +33,5 @@ if '__main__' == __name__:
     sep('CPUS')
     ids = get_gpu_indexes_from_env('GPUS')
     print(ids)
+    for xid in ids:
+        print_gpu_utilization(xid)

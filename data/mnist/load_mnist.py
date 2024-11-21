@@ -26,9 +26,12 @@ def _load(xbase_url, xtrain, xtest, xtrain_size, xtest_size):
             if xsize == xact_size:
                 print(f'{tar_path} already downloaded')
                 continue
+            elif xsize < xact_size:
+                print(f'{tar_path} is bigger than expected. Something should be wrong. Stop.', flush=True, file=sys.stderr)
+                sys.exit(1)
         xurl = xbase_url + '/' + xname
         print(f'Downloading ...')
-        xcmd = f'wget "{xurl}" -O "{tar_path}"'
+        xcmd = f'wget -O "{tar_path}" -c "{xurl}"'
         print(xcmd)
         os.system(xcmd)
         print('Downloaded.')

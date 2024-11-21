@@ -44,7 +44,7 @@ def load_names(xfile_name, xname, silent=False):
     if not silent:
         separator(xname)
 
-    with open(xfile_name) as f:
+    with open(xfile_name, encoding='gbk') as f:
         xnames = f.readlines()
     # print(xnames)
 
