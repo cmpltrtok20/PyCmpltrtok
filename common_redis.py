@@ -1,7 +1,12 @@
 """
 Hence the name "common redis", it is mainly for storing data to or retrieving data from Numpy.
 
+I write this code mainly based on below link from stackoverflow.
+
 https://stackoverflow.com/questions/55311399/fastest-way-to-store-a-numpy-array-in-redis
+
+But I am not sure if it can be used in a production environment.
+
 """
 import struct
 import numpy as np
@@ -14,7 +19,15 @@ import numpy as np
 
 
 def toRedis(r, a, n):
-    """Store given Numpy array 'a' in Redis under key 'n' (2d array only) """
+    """
+    Store given Numpy array 'a' in Redis under key 'n' (2d array only) 
+    
+    r: the redis client object.
+    a: the Numpy ndarray.
+    n: the name in redis.
+    
+    return: None
+    """
     h, w = a.shape
     shape = struct.pack('>II', h, w)
     encoded = shape + a.tobytes()
