@@ -19,7 +19,15 @@ import numpy as np
 
 
 def toRedis(r, a, n):
-    """Store given Numpy array 'a' in Redis under key 'n' (2d array only) """
+    """
+    Store given Numpy array 'a' in Redis under key 'n' (2d array only) 
+    
+    r: the redis client object.
+    a: the Numpy ndarray.
+    n: the name in redis.
+    
+    return: None
+    """
     h, w = a.shape
     shape = struct.pack('>II', h, w)
     encoded = shape + a.tobytes()
