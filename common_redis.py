@@ -1,7 +1,12 @@
 """
 Hence the name "common redis", it is mainly for storing data to or retrieving data from Numpy.
 
+I write this code mainly based on below link from stackoverflow.
+
 https://stackoverflow.com/questions/55311399/fastest-way-to-store-a-numpy-array-in-redis
+
+But I am not sure if it can be used in a production environment.
+
 """
 import struct
 import numpy as np
